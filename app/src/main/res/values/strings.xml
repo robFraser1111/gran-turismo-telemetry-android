@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Gran Telemetry</string>
-    <string name="local_network_usage">Gran Telemetry sends a heartbeat to your PS5 on the local network and listens for GT7 telemetry packets so live driving data can be shown.</string>
+    <string name="app_name">SlickDash</string>
+    <string name="local_network_usage">SlickDash sends a heartbeat to your PS5 on the local network and listens for GT7 telemetry packets so live driving data can be shown.</string>
 </resources>
