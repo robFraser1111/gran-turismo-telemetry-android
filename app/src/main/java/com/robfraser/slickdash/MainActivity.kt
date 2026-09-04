@@ -128,8 +128,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun App(vm: DashViewModel = viewModel()) {
     val s by vm.ui.collectAsState()
+    // Background stays edge-to-edge; chrome uses safeDrawing (status, nav, cutout, side nav in landscape).
     Box(Modifier.fillMaxSize().background(Page)) {
-        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+        Column(Modifier.fillMaxSize().safeDrawingPadding()) {
             Header(s.live, vm.mode, { vm.mode = it }, { vm.settings = true })
             when (vm.mode) {
                 Mode.Simple -> SimpleView(s)
@@ -447,6 +448,7 @@ fun Header(live: Boolean, mode: Mode, onMode: (Mode) -> Unit, onCog: () -> Unit)
     Box(Modifier.fillMaxSize().background(Color(0xB80B1220))) {
         Column(
             Modifier.fillMaxHeight().fillMaxWidth(0.42f).align(Alignment.CenterEnd)
+                .safeDrawingPadding()
                 .background(Page).border(1.dp, Cyan).padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
