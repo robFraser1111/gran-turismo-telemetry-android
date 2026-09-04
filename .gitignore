@@ -5,3 +5,8 @@ local.properties
 *.iml
 .idea/
 .DS_Store
+
+# Sentry org tokens / upload credentials — never commit
+sentry.properties
+.sentryclirc
+**/sentry.properties

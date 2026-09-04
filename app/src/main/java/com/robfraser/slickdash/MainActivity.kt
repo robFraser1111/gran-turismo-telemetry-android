@@ -488,6 +488,14 @@ fun Header(live: Boolean, mode: Mode, onMode: (Mode) -> Unit, onCog: () -> Unit)
                     vm.connectIp(vm.manualIp); vm.showIp = false
                 })
             }
+            if (BuildConfig.DEBUG) {
+                Text(
+                    "Send Sentry test",
+                    color = Muted,
+                    fontSize = 12.sp,
+                    modifier = Modifier.clickable { SlickDashApp.captureTestError() }
+                )
+            }
         }
     }
 }
