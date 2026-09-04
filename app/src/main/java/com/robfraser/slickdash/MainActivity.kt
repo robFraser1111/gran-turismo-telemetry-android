@@ -1,5 +1,6 @@
 package com.robfraser.slickdash
 
+import android.content.res.Configuration
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -15,6 +16,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.Canvas
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -127,7 +129,7 @@ class MainActivity : ComponentActivity() {
 fun App(vm: DashViewModel = viewModel()) {
     val s by vm.ui.collectAsState()
     Box(Modifier.fillMaxSize().background(Page)) {
-        Column(Modifier.fillMaxSize().statusBarsPadding()) {
+        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
             Header(s.live, vm.mode, { vm.mode = it }, { vm.settings = true })
             when (vm.mode) {
                 Mode.Simple -> SimpleView(s)
@@ -186,19 +188,40 @@ fun Header(live: Boolean, mode: Mode, onMode: (Mode) -> Unit, onCog: () -> Unit)
     }
 }
 
+@Composable fun isLandscape(): Boolean =
+    LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+@Composable fun FuelCard(s: DashState, modifier: Modifier = Modifier, big: Boolean = false) {
+    CardBox(modifier) {
+        Lbl("Fuel — this session")
+        Text("%.0f%%".format(s.fuelPct), color = Text, fontSize = if (big) 42.sp else 22.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp)); Bar((s.fuelPct / 100.0).toFloat(), Amber)
+        Text("%s%%/lap".format(s.fuelPerLap?.let { "%.1f".format(it) } ?: "—"), color = Text, fontSize = 13.sp)
+        Text("%s laps remaining".format(s.lapsRemaining?.let { "%.1f".format(it) } ?: "—"), color = Text, fontSize = 13.sp)
+        Text(if (s.stops == 1) "1 stop" else "${s.stops} stops", color = Muted, fontSize = 12.sp)
+    }
+}
+
 @Composable fun SimpleView(s: DashState) {
-    Row(Modifier.fillMaxSize().padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        CardBox(Modifier.fillMaxHeight().weight(0.38f)) {
-            Lbl("Fuel — this session")
-            Text("%.0f%%".format(s.fuelPct), color = Text, fontSize = 42.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(8.dp)); Bar((s.fuelPct / 100.0).toFloat(), Amber)
-            Text("%s%%/lap".format(s.fuelPerLap?.let { "%.1f".format(it) } ?: "—"), color = Text, fontSize = 13.sp)
-            Text("%s laps remaining".format(s.lapsRemaining?.let { "%.1f".format(it) } ?: "—"), color = Text, fontSize = 13.sp)
-            Text("${s.stops} stop".let { if (s.stops == 1) it else "$it" } + if (s.stops == 1) "" else "s", color = Muted, fontSize = 12.sp)
+    val land = isLandscape()
+    if (land) {
+        Row(Modifier.fillMaxSize().padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FuelCard(s, Modifier.fillMaxHeight().weight(0.42f), big = true)
+            CardBox(Modifier.fillMaxHeight().weight(1f)) {
+                Lbl("Tire temps")
+                TireGrid(s.packet, Modifier.weight(1f))
+            }
         }
-        CardBox(Modifier.fillMaxHeight().weight(1f)) {
-            Lbl("Tire temps")
-            TireGrid(s.packet, Modifier.weight(1f))
+    } else {
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FuelCard(s, Modifier.fillMaxWidth(), big = true)
+            CardBox(Modifier.fillMaxWidth().height(280.dp)) {
+                Lbl("Tire temps")
+                TireGrid(s.packet, Modifier.weight(1f))
+            }
         }
     }
 }
@@ -223,49 +246,91 @@ fun Header(live: Boolean, mode: Mode, onMode: (Mode) -> Unit, onCog: () -> Unit)
     }
 }
 
+@Composable fun GearSpeedCard(p: TelemetryPacket?, modifier: Modifier = Modifier) {
+    CardBox(modifier) {
+        Lbl("Gear / speed")
+        RpmBar(p?.rpmFrac ?: 0f)
+        Row(verticalAlignment = Alignment.Bottom) {
+            Column { Lbl("Gear"); Text(p?.gearDisplay ?: "N", color = Text, fontSize = 34.sp, fontWeight = FontWeight.SemiBold) }
+            Spacer(Modifier.width(16.dp))
+            Column { Lbl("Speed"); Text("%d km/h".format((p?.speedKph ?: 0.0).toInt()), color = Text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold) }
+        }
+    }
+}
+
+@Composable fun ThrottleBrakeCard(p: TelemetryPacket?, modifier: Modifier = Modifier) {
+    CardBox(modifier) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Lbl("Throttle"); Text("${p?.throttlePct ?: 0}%", color = Green, fontSize = 13.sp)
+        }
+        Bar((p?.throttlePct ?: 0) / 100f, Color(0xFF166534))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Lbl("Brake"); Text("${p?.brakePct ?: 0}%", color = Muted, fontSize = 13.sp)
+        }
+        Bar((p?.brakePct ?: 0) / 100f, Red)
+    }
+}
+
+@Composable fun DeltaCard(s: DashState, modifier: Modifier = Modifier, fill: Boolean = false) {
+    CardBox(modifier) {
+        Lbl("Delta vs session best")
+        val d = s.liveDelta
+        Text(
+            formatDelta(d),
+            color = if (d != null && d < 0) Green else if (d != null) Red else Text,
+            fontSize = 34.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            softWrap = false,
+        )
+        if (fill) Spacer(Modifier.weight(1f)) else Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("LAST ${formatLap(s.lastMs)}", color = Muted, fontSize = 12.sp)
+            Text("BEST ${formatLap(s.bestMs)}", color = Muted, fontSize = 12.sp)
+        }
+    }
+}
+
+@Composable fun DrivingFuelCard(s: DashState, modifier: Modifier = Modifier) {
+    CardBox(modifier) {
+        Lbl("Fuel — this session")
+        Text("%.0f%%".format(s.fuelPct), color = Text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+        Bar((s.fuelPct / 100.0).toFloat(), Amber)
+        Text("%s%%/lap".format(s.fuelPerLap?.let { "%.1f".format(it) } ?: "—"), color = Text, fontSize = 13.sp)
+        Text("%s laps · %d stop".format(s.lapsRemaining?.let { "%.1f".format(it) } ?: "—", s.stops), color = Muted, fontSize = 12.sp)
+    }
+}
+
 @Composable fun DrivingView(s: DashState) {
     val p = s.packet
-    Row(Modifier.fillMaxSize().padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Column(Modifier.weight(1.15f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            CardBox(Modifier.weight(1f)) {
-                Lbl("Gear / speed")
-                RpmBar(p?.rpmFrac ?: 0f)
-                Row(verticalAlignment = Alignment.Bottom) {
-                    Column { Lbl("Gear"); Text(p?.gearDisplay ?: "N", color = Text, fontSize = 34.sp, fontWeight = FontWeight.SemiBold) }
-                    Spacer(Modifier.width(16.dp))
-                    Column { Lbl("Speed"); Text("%d km/h".format((p?.speedKph ?: 0.0).toInt()), color = Text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold) }
-                }
+    val land = isLandscape()
+    if (land) {
+        // Max 2 columns: Gear+Throttle | Delta / Fuel+Tires
+        Row(Modifier.fillMaxSize().padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                GearSpeedCard(p, Modifier.fillMaxWidth())
+                ThrottleBrakeCard(p, Modifier.fillMaxWidth())
             }
-            CardBox(Modifier.weight(0.72f)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Lbl("Throttle"); Text("${p?.throttlePct ?: 0}%", color = Green, fontSize = 13.sp)
+            Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                DeltaCard(s, Modifier.fillMaxWidth())
+                DrivingFuelCard(s, Modifier.fillMaxWidth())
+                CardBox(Modifier.fillMaxWidth().height(200.dp)) {
+                    Lbl("Tire temps")
+                    TireGrid(p, Modifier.weight(1f))
                 }
-                Bar((p?.throttlePct ?: 0) / 100f, Color(0xFF166534))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Lbl("Brake"); Text("${p?.brakePct ?: 0}%", color = Muted, fontSize = 13.sp)
-                }
-                Bar((p?.brakePct ?: 0) / 100f, Red)
             }
         }
-        CardBox(Modifier.weight(1f).fillMaxHeight()) {
-            Lbl("Delta vs session best")
-            val d = s.liveDelta
-            Text(formatDelta(d), color = if (d != null && d < 0) Green else if (d != null) Red else Text, fontSize = 34.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.weight(1f))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("LAST ${formatLap(s.lastMs)}", color = Muted, fontSize = 12.sp)
-                Text("BEST ${formatLap(s.bestMs)}", color = Muted, fontSize = 12.sp)
-            }
-        }
-        Column(Modifier.weight(0.95f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            CardBox(Modifier.weight(1f)) {
-                Lbl("Fuel — this session")
-                Text("%.0f%%".format(s.fuelPct), color = Text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
-                Bar((s.fuelPct / 100.0).toFloat(), Amber)
-                Text("%s%%/lap".format(s.fuelPerLap?.let { "%.1f".format(it) } ?: "—"), color = Text, fontSize = 13.sp)
-                Text("%s laps · %d stop".format(s.lapsRemaining?.let { "%.1f".format(it) } ?: "—", s.stops), color = Muted, fontSize = 12.sp)
-            }
-            CardBox(Modifier.weight(1f)) {
+    } else {
+        // Portrait: always 1 column, stacked order from design lock
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            GearSpeedCard(p, Modifier.fillMaxWidth())
+            ThrottleBrakeCard(p, Modifier.fillMaxWidth())
+            DeltaCard(s, Modifier.fillMaxWidth())
+            DrivingFuelCard(s, Modifier.fillMaxWidth())
+            CardBox(Modifier.fillMaxWidth().height(240.dp)) {
                 Lbl("Tire temps")
                 TireGrid(p, Modifier.weight(1f))
             }
