@@ -1,8 +1,34 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+// Play upload signing — local keystore.properties (gitignored) or env vars.
+// Never commit *.jks / *.keystore / passwords.
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
+}
+
+fun propOrEnv(prop: String, env: String): String? =
+    keystoreProperties.getProperty(prop)?.takeIf { it.isNotBlank() }
+        ?: System.getenv(env)?.takeIf { it.isNotBlank() }
+
+val releaseStoreFile = propOrEnv("storeFile", "PLAY_STORE_FILE")
+val releaseStorePassword = propOrEnv("storePassword", "PLAY_STORE_PASSWORD")
+val releaseKeyAlias = propOrEnv("keyAlias", "PLAY_KEY_ALIAS")
+val releaseKeyPassword = propOrEnv("keyPassword", "PLAY_KEY_PASSWORD")
+val hasReleaseSigning =
+    !releaseStoreFile.isNullOrBlank() &&
+        !releaseStorePassword.isNullOrBlank() &&
+        !releaseKeyAlias.isNullOrBlank() &&
+        !releaseKeyPassword.isNullOrBlank() &&
+        rootProject.file(releaseStoreFile!!).isFile
+
 android {
     namespace = "com.robfraser.slickdash"
     compileSdk = 35
@@ -13,7 +39,24 @@ android {
         versionCode = 1
         versionName = "1.0.0"
     }
-    buildTypes { getByName("release") { isMinifyEnabled = false } }
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = rootProject.file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = false
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
