@@ -6,7 +6,7 @@ Not affiliated with Sony Interactive Entertainment or Polyphony Digital.
 
 ## Screenshots
 
-Samsung Galaxy A17 (SM-A175F). IDLE session — UI layout only.
+Samsung Galaxy A17 (SM-A175F), native resolution (portrait 1080×2340, landscape 2340×1080). IDLE session — UI layout only. Display width is capped below; files stay sharp for Play Store / marketing.
 
 ### Portrait — Simple
 
@@ -31,6 +31,10 @@ Samsung Galaxy A17 (SM-A175F). IDLE session — UI layout only.
 ### Landscape — Pit wall
 
 <img src="docs/screenshots/pit-wall-landscape.png" alt="Pit wall landscape" width="480" />
+
+## Play / marketing assets
+
+Full-resolution PNGs live in `docs/screenshots/`. Landscape also exported as `*-landscape-1920x1080.png` (1920×1080 on `#0B1220`) for Play Console / mockups.
 
 ## Run
 
