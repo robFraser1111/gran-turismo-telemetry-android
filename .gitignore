@@ -5,6 +5,10 @@ local.properties
 *.iml
 .idea/
 .DS_Store
+.kotlin/
+*.jks
+*.keystore
+keystore.properties
 
 # Sentry org tokens / upload credentials — never commit
 sentry.properties

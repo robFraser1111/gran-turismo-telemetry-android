@@ -1,7 +1,6 @@
 package com.robfraser.slickdash
 
 import kotlin.math.hypot
-import kotlin.math.roundToInt
 
 data class LapRow(val lap: Int, val timeMs: Int, val isBest: Boolean)
 
@@ -84,7 +83,8 @@ class SessionTracker {
             lapsRemaining = rem,
             stops = stops,
             lastMs = p.lastLapMs.takeIf { it > 0 },
-            bestMs = bestMs ?: p.bestLapMs.takeIf { it > 0 },
+            // Session best is local flyers only — never fall back to GT7 packet PB.
+            bestMs = bestMs,
             liveDelta = delta,
             deltaTrace = trace.toList(),
             laps = laps.toList().takeLast(12),

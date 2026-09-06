@@ -3,7 +3,6 @@ package com.robfraser.slickdash
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.Inet4Address
-import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.nio.ByteBuffer
@@ -33,6 +32,14 @@ object Salsa20 {
             if (state[8] == 0) state[9]++
         }
     }
+
+    /** First 64 bytes of keystream for (key, nonce) with counter 0. Used by tests. */
+    fun firstBlock(key: ByteArray, nonce: ByteArray): ByteArray {
+        val zeros = ByteArray(64)
+        xorInPlace(key, nonce, zeros)
+        return zeros
+    }
+
     private fun rotl(v: Int, c: Int) = (v shl c) or (v ushr (32 - c))
     private fun generate(input: IntArray, out: ByteArray) {
         val x = input.copyOf()
@@ -75,21 +82,67 @@ object Salsa20 {
     }
 }
 
+enum class QualityRating { Poor, Fair, Good }
+
+/** Connection quality from packet rate and decode-error ratio. */
+object ConnectionQuality {
+    fun classify(packetsPerSecond: Double, errorRatio: Double): QualityRating {
+        val err = errorRatio.coerceIn(0.0, 1.0)
+        if (packetsPerSecond >= 40 && err < 0.08) return QualityRating.Good
+        if (packetsPerSecond >= 12 && err < 0.25) return QualityRating.Fair
+        return QualityRating.Poor
+    }
+}
+
+data class DecodeResult(val packet: TelemetryPacket?, val reason: String?)
+
 object Gt7Crypto {
     private const val DEAD = 0xDEADBEAF.toInt()
     const val MAGIC = 0x47375330
-    val key: ByteArray = "Simulator Interface Packet GT7 ver 0.0".toByteArray(Charsets.UTF_8).copyOf(32)
-    fun tryDecode(raw: ByteArray): TelemetryPacket? {
-        if (raw.size < TelemetryPacket.MIN) return null
-        val buf = raw.copyOf()
-        val oiv = ByteBuffer.wrap(buf, 0x40, 4).order(ByteOrder.LITTLE_ENDIAN).int
-        val nonce = ByteArray(8)
+    const val KEY_SEED = "Simulator Interface Packet GT7 ver 0.0"
+    val key: ByteArray = KEY_SEED.toByteArray(Charsets.UTF_8).copyOf(32)
+
+    fun buildNonce(oiv: Int, nonce: ByteArray) {
+        require(nonce.size >= 8)
         val le = ByteBuffer.wrap(nonce).order(ByteOrder.LITTLE_ENDIAN)
-        le.putInt(oiv xor DEAD); le.putInt(oiv)
-        Salsa20.xorInPlace(key, nonce, buf)
-        val magic = ByteBuffer.wrap(buf, 0, 4).order(ByteOrder.LITTLE_ENDIAN).int
-        if (magic != MAGIC) return null
-        return TelemetryPacket.parse(buf)
+        le.putInt(oiv xor DEAD)
+        le.putInt(oiv)
+    }
+
+    /**
+     * Builds ciphertext that decrypts back to [plaintext] via [tryDecode].
+     * IV bytes at offset 0x40 in the returned buffer are literally [ciphertextIv].
+     */
+    fun encryptForTest(plaintext: ByteArray, ciphertextIv: Int): ByteArray {
+        val nonce = ByteArray(8)
+        buildNonce(ciphertextIv, nonce)
+        val cipher = plaintext.copyOf()
+        Salsa20.xorInPlace(key, nonce, cipher)
+        ByteBuffer.wrap(cipher, 0x40, 4).order(ByteOrder.LITTLE_ENDIAN).putInt(ciphertextIv)
+        return cipher
+    }
+
+    fun tryDecode(raw: ByteArray): DecodeResult {
+        if (raw.size < TelemetryPacket.MIN) {
+            return DecodeResult(null, "short packet (${raw.size} bytes, need >= ${TelemetryPacket.MIN})")
+        }
+        return try {
+            val buf = raw.copyOf()
+            val oiv = ByteBuffer.wrap(buf, 0x40, 4).order(ByteOrder.LITTLE_ENDIAN).int
+            val nonce = ByteArray(8)
+            buildNonce(oiv, nonce)
+            Salsa20.xorInPlace(key, nonce, buf)
+            val magic = ByteBuffer.wrap(buf, 0, 4).order(ByteOrder.LITTLE_ENDIAN).int
+            if (magic != MAGIC) {
+                return DecodeResult(
+                    null,
+                    "bad magic 0x${magic.toUInt().toString(16).uppercase().padStart(8, '0')} after decrypt (expected 0x47375330 'G7S0')",
+                )
+            }
+            DecodeResult(TelemetryPacket.parse(buf), null)
+        } catch (ex: Exception) {
+            DecodeResult(null, ex.message)
+        }
     }
 }
 
@@ -191,7 +244,7 @@ class Gt7UdpClient(
                 onRaw()
                 val data = buf.copyOf(pkt.length)
                 val decoded = Gt7Crypto.tryDecode(data)
-                if (decoded == null) { onDecodeFail(); continue }
+                if (decoded.packet == null) { onDecodeFail(); continue }
                 val from = pkt.address.hostAddress
                 if (peer == null && from != null) {
                     peer = from
@@ -199,7 +252,7 @@ class Gt7UdpClient(
                     onPeer(from)
                     onStatus("Connected $from")
                 }
-                onPacket(decoded)
+                onPacket(decoded.packet)
             } catch (_: Exception) { /* timeout */ }
         }
     }
