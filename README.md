@@ -8,17 +8,31 @@ Not affiliated with Sony Interactive Entertainment or Polyphony Digital.
 
 Samsung Galaxy A17 (SM-A175F). IDLE session — UI layout only.
 
-### Portrait
+Images are listed one-per-line (not in a table) so Android Studio’s README preview can load them.
 
-| Simple | Driving | Pit wall |
-| --- | --- | --- |
-| ![Simple](docs/screenshots/simple.png) | ![Driving](docs/screenshots/driving.png) | ![Pit wall](docs/screenshots/pit-wall.png) |
+### Portrait — Simple
 
-### Landscape
+![Simple portrait](docs/screenshots/simple.png)
 
-| Simple | Driving | Pit wall |
-| --- | --- | --- |
-| ![Simple landscape](docs/screenshots/simple-landscape.png) | ![Driving landscape](docs/screenshots/driving-landscape.png) | ![Pit wall landscape](docs/screenshots/pit-wall-landscape.png) |
+### Portrait — Driving
+
+![Driving portrait](docs/screenshots/driving.png)
+
+### Portrait — Pit wall
+
+![Pit wall portrait](docs/screenshots/pit-wall.png)
+
+### Landscape — Simple
+
+![Simple landscape](docs/screenshots/simple-landscape.png)
+
+### Landscape — Driving
+
+![Driving landscape](docs/screenshots/driving-landscape.png)
+
+### Landscape — Pit wall
+
+![Pit wall landscape](docs/screenshots/pit-wall-landscape.png)
 
 ## Run
 
