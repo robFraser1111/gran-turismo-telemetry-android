@@ -43,3 +43,7 @@ Requires Android 8+ (API 26). LAN UDP to GT7 (heartbeat 33739, receive 33740).
 ## CI
 
 GitHub Actions builds a debug APK and runs unit tests on every PR. No signing secrets or Sentry auth tokens are used.
+
+## Crash reporting (Sentry)
+
+Errors go to the `gran-telemetry-android` project in org `robert-fraser`. The client DSN is baked in (public event-submit key only). Override with env `SENTRY_DSN` if needed. Do **not** commit Sentry org auth tokens, `sentry.properties` with tokens, or mapping-upload credentials.

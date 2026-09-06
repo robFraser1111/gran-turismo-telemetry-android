@@ -9,3 +9,8 @@ local.properties
 *.jks
 *.keystore
 keystore.properties
+
+# Sentry org tokens / upload credentials — never commit
+sentry.properties
+.sentryclirc
+**/sentry.properties
