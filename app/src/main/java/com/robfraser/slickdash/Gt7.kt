@@ -150,16 +150,23 @@ data class TelemetryPacket(
     val posX: Float, val posZ: Float,
     val rpm: Float, val fuelLevel: Float, val fuelCapacity: Float,
     val speedMps: Float, val tireFL: Float, val tireFR: Float, val tireRL: Float, val tireRR: Float,
-    val currentLap: Int, val bestLapMs: Int, val lastLapMs: Int,
+    val currentLap: Int, val totalLaps: Int, val bestLapMs: Int, val lastLapMs: Int,
     val alertMaxRpm: Int, val flags: Int, val gear: Int, val throttle: Int, val brake: Int,
+    val carCode: Int = 0,
 ) {
     val speedKph get() = speedMps * 3.6
     val fuelPercent get() = if (fuelCapacity > 0f) (fuelLevel / fuelCapacity) * 100.0 else fuelLevel.toDouble()
     val throttlePct get() = (throttle / 255.0 * 100).toInt()
     val brakePct get() = (brake / 255.0 * 100).toInt()
+    val throttleNorm get() = throttle / 255.0
+    val brakeNorm get() = brake / 255.0
     val rpmFrac get() = (rpm / maxOf(alertMaxRpm, 1)).coerceIn(0f, 1f)
     val gearDisplay get() = when (gear) { 0 -> "R"; 15 -> "N"; else -> gear.toString() }
+    /** Car on track, not paused, not loading — same as Windows IsRacing. */
     val onTrack get() = flags and 1 != 0 && flags and 2 == 0 && flags and 4 == 0
+    val isPaused get() = flags and 2 != 0
+    val isLoading get() = flags and 4 != 0
+    val isRacing get() = onTrack
     companion object {
         const val MIN = 0x128
         fun parse(p: ByteArray): TelemetryPacket {
@@ -171,9 +178,11 @@ data class TelemetryPacket(
                 posX = f(0x04), posZ = f(0x0C), rpm = f(0x3C),
                 fuelLevel = f(0x44), fuelCapacity = f(0x48), speedMps = f(0x4C),
                 tireFL = f(0x60), tireFR = f(0x64), tireRL = f(0x68), tireRR = f(0x6C),
-                currentLap = i16(0x74), bestLapMs = i32(0x78), lastLapMs = i32(0x7C),
+                currentLap = i16(0x74), totalLaps = i16(0x76),
+                bestLapMs = i32(0x78), lastLapMs = i32(0x7C),
                 alertMaxRpm = i16(0x8A), flags = i16(0x8E),
                 gear = gears and 0x0F, throttle = p[0x91].toInt() and 0xFF, brake = p[0x92].toInt() and 0xFF,
+                carCode = if (p.size >= 0x128) i32(0x124) else 0,
             )
         }
     }

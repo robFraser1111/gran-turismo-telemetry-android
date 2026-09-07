@@ -1,6 +1,7 @@
 package com.robfraser.slickdash
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -51,6 +52,18 @@ class SessionTrackerTests {
     }
 
     @Test
+    fun onlyOneLapMarkedIsBest() {
+        val s = SessionTracker()
+        s.onPacket(racing(lap = 1, lastMs = 0, bestMs = 80_000, fuel = 50.0), now = 1_000)
+        s.onPacket(racing(lap = 2, lastMs = 90_000, bestMs = 80_000, fuel = 47.0), now = 91_000)
+        s.onPacket(racing(lap = 3, lastMs = 85_000, bestMs = 80_000, fuel = 44.0), now = 176_000)
+        val st = s.onPacket(racing(lap = 4, lastMs = 85_000, bestMs = 80_000, fuel = 41.0), now = 261_000)
+        assertEquals(2, st.lapsInMemory)
+        assertEquals(1, st.laps.count { it.isBest })
+        assertEquals(85_000, st.bestMs)
+    }
+
+    @Test
     fun fuelPerLapDerived() {
         val s = SessionTracker()
         s.onPacket(racing(lap = 1, lastMs = 0, bestMs = 80_000, fuel = 50.0), now = 1_000)
@@ -62,6 +75,44 @@ class SessionTrackerTests {
         st = s.onPacket(racing(lap = 3, lastMs = 85_000, bestMs = 80_000, fuel = 44.0), now = 176_000)
         assertTrue(st.fuelPerLap != null)
         assertTrue(st.fuelPerLap!! in 2.5..3.5)
+    }
+
+    @Test
+    fun currentLapDropResetsStint() {
+        val s = SessionTracker()
+        s.onPacket(racing(lap = 1, lastMs = 0, bestMs = 80_000, fuel = 50.0), now = 1_000)
+        s.onPacket(racing(lap = 2, lastMs = 90_000, bestMs = 80_000, fuel = 47.0), now = 91_000)
+        s.onPacket(racing(lap = 3, lastMs = 85_000, bestMs = 80_000, fuel = 44.0), now = 176_000)
+        assertEquals(85_000, s.bestMs)
+
+        val st = s.onPacket(racing(lap = 1, lastMs = 85_000, bestMs = 80_000, fuel = 80.0), now = 200_000)
+        assertEquals(0, st.lapsInMemory)
+        assertNull(st.bestMs)
+        assertNull(s.bestMs)
+    }
+
+    @Test
+    fun carCodeChangeResetsStint() {
+        val s = SessionTracker()
+        s.onPacket(racing(lap = 1, lastMs = 0, bestMs = 80_000, fuel = 50.0, carCode = 10), now = 1_000)
+        s.onPacket(racing(lap = 2, lastMs = 90_000, bestMs = 80_000, fuel = 47.0, carCode = 10), now = 91_000)
+        s.onPacket(racing(lap = 3, lastMs = 85_000, bestMs = 80_000, fuel = 44.0, carCode = 10), now = 176_000)
+        assertEquals(1, s.onPacket(racing(lap = 3, lastMs = 85_000, bestMs = 80_000, fuel = 44.0, carCode = 10), now = 177_000).lapsInMemory)
+
+        val st = s.onPacket(racing(lap = 3, lastMs = 85_000, bestMs = 80_000, fuel = 44.0, carCode = 20), now = 178_000)
+        assertEquals(0, st.lapsInMemory)
+        assertNull(st.bestMs)
+    }
+
+    @Test
+    fun notRacingReturnsNullDeltaAndLiveFalse() {
+        val s = SessionTracker()
+        s.onPacket(racing(lap = 1, lastMs = 0, bestMs = 80_000, fuel = 50.0), now = 1_000)
+        val paused = racing(lap = 1, lastMs = 0, bestMs = 80_000, fuel = 50.0).copy(flags = 1 or 2)
+        val st = s.onPacket(paused, now = 2_000)
+        assertFalse(st.live)
+        assertNull(st.liveDelta)
+        assertTrue(st.deltaTrace.isEmpty())
     }
 
     @Test
@@ -97,28 +148,33 @@ class SessionTrackerTests {
         assertEquals(1, st.lapsInMemory)
         assertEquals(80_000, st.bestMs)
 
-        // Before this completion, liveDelta was null; after second flyer install,
-        // subsequent samples on the same path can produce a delta.
+        // After first eligible flyer install, subsequent samples can produce a delta.
         clock = driveArc(s, clock, lap = 3, lastMs = 80_000, bestMs = 80_000, durationMs = 96_000, points = 9)
         st = s.onPacket(pathPkt(lap = 3, lastMs = 80_000, bestMs = 80_000, x = 0f, z = 80f), now = clock)
-        // Soft assert: either still null (brittle matching) or a finite delta vs ghost
         if (st.liveDelta != null) {
             assertTrue(st.liveDelta!!.isFinite())
         }
     }
 
-    private fun racing(lap: Int, lastMs: Int, bestMs: Int, fuel: Double) = TelemetryPacket(
+    private fun racing(
+        lap: Int,
+        lastMs: Int,
+        bestMs: Int,
+        fuel: Double,
+        carCode: Int = 0,
+        totalLaps: Int = 0,
+    ) = TelemetryPacket(
         posX = 0f, posZ = 0f, rpm = 3000f, fuelLevel = fuel.toFloat(), fuelCapacity = 100f,
         speedMps = 10f, tireFL = 80f, tireFR = 80f, tireRL = 80f, tireRR = 80f,
-        currentLap = lap, bestLapMs = bestMs, lastLapMs = lastMs,
-        alertMaxRpm = 8000, flags = 1, gear = 3, throttle = 100, brake = 0,
+        currentLap = lap, totalLaps = totalLaps, bestLapMs = bestMs, lastLapMs = lastMs,
+        alertMaxRpm = 8000, flags = 1, gear = 3, throttle = 100, brake = 0, carCode = carCode,
     )
 
     private fun pathPkt(lap: Int, lastMs: Int, bestMs: Int, x: Float, z: Float) = TelemetryPacket(
         posX = x, posZ = z, rpm = 3000f, fuelLevel = 50f, fuelCapacity = 100f,
         speedMps = 10f, tireFL = 80f, tireFR = 80f, tireRL = 80f, tireRR = 80f,
-        currentLap = lap, bestLapMs = bestMs, lastLapMs = lastMs,
-        alertMaxRpm = 8000, flags = 1, gear = 3, throttle = 100, brake = 0,
+        currentLap = lap, totalLaps = 0, bestLapMs = bestMs, lastLapMs = lastMs,
+        alertMaxRpm = 8000, flags = 1, gear = 3, throttle = 100, brake = 0, carCode = 0,
     )
 
     /** Drive an elliptical arc; returns clock after last sample. */
