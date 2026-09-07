@@ -48,10 +48,13 @@ class Salsa20ParserTests {
         writeF32(plaintext, 0x68, 92.0f)
         writeF32(plaintext, 0x6C, 93.0f)
         writeI16(plaintext, 0x74, 3)
+        writeI16(plaintext, 0x76, 10)
         writeI16(plaintext, 0x8A, 8500)
+        writeI16(plaintext, 0x8E, 1) // CarOnTrack
         plaintext[0x90] = 0x04
         plaintext[0x91] = 200.toByte()
         plaintext[0x92] = 40
+        writeI32(plaintext, 0x124, 12345)
 
         val cipher = Gt7Crypto.encryptForTest(plaintext, 0x12345678)
         assertEquals(0x12345678, ByteBuffer.wrap(cipher, 0x40, 4).order(ByteOrder.LITTLE_ENDIAN).int)
@@ -71,6 +74,11 @@ class Salsa20ParserTests {
         assertEquals(200, packet.throttle)
         assertEquals(40, packet.brake)
         assertEquals(3, packet.currentLap)
+        assertEquals(10, packet.totalLaps)
+        assertEquals(12345, packet.carCode)
+        assertTrue(packet.isRacing)
+        assertFalse(packet.isPaused)
+        assertFalse(packet.isLoading)
     }
 
     @Test
@@ -119,8 +127,8 @@ class Salsa20ParserTests {
     private fun pkt(gear: Int) = TelemetryPacket(
         posX = 0f, posZ = 0f, rpm = 0f, fuelLevel = 0f, fuelCapacity = 100f,
         speedMps = 0f, tireFL = 0f, tireFR = 0f, tireRL = 0f, tireRR = 0f,
-        currentLap = 0, bestLapMs = 0, lastLapMs = 0,
-        alertMaxRpm = 8000, flags = 0, gear = gear, throttle = 0, brake = 0,
+        currentLap = 0, totalLaps = 0, bestLapMs = 0, lastLapMs = 0,
+        alertMaxRpm = 8000, flags = 0, gear = gear, throttle = 0, brake = 0, carCode = 0,
     )
 
     private fun writeF32(buf: ByteArray, offset: Int, value: Float) {
@@ -134,4 +142,9 @@ class Salsa20ParserTests {
     private fun writeI16(buf: ByteArray, offset: Int, value: Int) {
         ByteBuffer.wrap(buf, offset, 2).order(ByteOrder.LITTLE_ENDIAN).putShort(value.toShort())
     }
+
+    private fun writeI32(buf: ByteArray, offset: Int, value: Int) {
+        ByteBuffer.wrap(buf, offset, 4).order(ByteOrder.LITTLE_ENDIAN).putInt(value)
+    }
 }
+

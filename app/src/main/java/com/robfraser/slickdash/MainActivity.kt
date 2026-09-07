@@ -62,54 +62,103 @@ class DashViewModel : ViewModel() {
     var showIp by mutableStateOf(false)
     private val exec = Executors.newSingleThreadExecutor()
     private var client: Gt7UdpClient? = null
+    private val throttleTrace = ArrayDeque<Float>()
+    private val brakeTrace = ArrayDeque<Float>()
+    private var qualityWindowStart = System.currentTimeMillis()
+    private var qualityRxAtStart = 0
+    private var qualityErrAtStart = 0
 
     init { findPs5() }
+
+    private fun appendInputTrace(buf: ArrayDeque<Float>, v: Float) {
+        buf.addLast(v)
+        while (buf.size > 120) buf.removeFirst()
+    }
+
+    private fun refreshQuality(rx: Int, err: Int): QualityRating {
+        val now = System.currentTimeMillis()
+        val elapsed = (now - qualityWindowStart) / 1000.0
+        if (elapsed >= 1.0) {
+            val drx = (rx - qualityRxAtStart).toDouble()
+            val derr = (err - qualityErrAtStart).toDouble()
+            val pps = drx / maxOf(elapsed, 0.001)
+            val ratio = when {
+                drx > 0 -> derr / drx
+                derr > 0 -> 1.0
+                else -> 0.0
+            }
+            val rating = ConnectionQuality.classify(pps, ratio)
+            qualityWindowStart = now
+            qualityRxAtStart = rx
+            qualityErrAtStart = err
+            return rating
+        }
+        return _ui.value.quality
+    }
+
+    private fun applyPacket(p: TelemetryPacket, peerOverride: String? = null) {
+        val s = tracker.onPacket(p)
+        val prev = _ui.value
+        val racing = p.isRacing
+        if (racing) {
+            appendInputTrace(throttleTrace, p.throttleNorm.toFloat())
+            appendInputTrace(brakeTrace, p.brakeNorm.toFloat())
+        }
+        val displayPacket = if (racing) {
+            p
+        } else {
+            (s.packet ?: prev.packet)?.copy(
+                speedMps = 0f, rpm = 0f, throttle = 0, brake = 0, gear = 15,
+            )
+        }
+        _ui.value = prev.copy(
+            live = racing,
+            packet = displayPacket,
+            fuelPct = s.fuelPct,
+            fuelPerLap = s.fuelPerLap,
+            lapsRemaining = s.lapsRemaining,
+            stops = s.stops,
+            windowOpen = s.windowOpen,
+            lastMs = s.lastMs,
+            bestMs = s.bestMs,
+            liveDelta = if (racing) s.liveDelta else null,
+            deltaTrace = if (racing) s.deltaTrace else emptyList(),
+            throttleTrace = throttleTrace.toList(),
+            brakeTrace = brakeTrace.toList(),
+            laps = s.laps,
+            lapsInMemory = s.lapsInMemory,
+            dec = prev.dec + 1,
+            peer = peerOverride ?: prev.peer,
+            quality = refreshQuality(prev.rx, prev.err),
+        )
+    }
+
+    private fun bindClient(peerOverride: String? = null): Gt7UdpClient =
+        Gt7UdpClient(
+            onPacket = { p -> applyPacket(p, peerOverride) },
+            onRaw = {
+                val rx = _ui.value.rx + 1
+                _ui.value = _ui.value.copy(rx = rx, quality = refreshQuality(rx, _ui.value.err))
+            },
+            onDecodeFail = {
+                val err = _ui.value.err + 1
+                _ui.value = _ui.value.copy(err = err, quality = refreshQuality(_ui.value.rx, err))
+            },
+            onPeer = { ip -> _ui.value = _ui.value.copy(peer = ip) },
+            onStatus = { st -> _ui.value = _ui.value.copy(status = st) },
+        )
 
     fun findPs5() {
         client?.stop()
         _ui.value = _ui.value.copy(status = "Looking for GT7 on this network…", peer = null, live = false)
-        val c = Gt7UdpClient(
-            onPacket = { p ->
-                val s = tracker.onPacket(p)
-                _ui.value = _ui.value.copy(
-                    live = s.live, packet = s.packet, fuelPct = s.fuelPct, fuelPerLap = s.fuelPerLap,
-                    lapsRemaining = s.lapsRemaining, stops = s.stops, lastMs = s.lastMs, bestMs = s.bestMs,
-                    liveDelta = s.liveDelta, deltaTrace = s.deltaTrace, laps = s.laps, lapsInMemory = s.lapsInMemory,
-                    dec = _ui.value.dec + 1, quality = 0.86f,
-                )
-            },
-            onRaw = { _ui.value = _ui.value.copy(rx = _ui.value.rx + 1) },
-            onDecodeFail = { _ui.value = _ui.value.copy(err = _ui.value.err + 1) },
-            onPeer = { ip -> _ui.value = _ui.value.copy(peer = ip) },
-            onStatus = { st -> _ui.value = _ui.value.copy(status = st) },
-        )
+        val c = bindClient()
         client = c
         exec.execute { c.startDiscover() }
     }
 
     fun connectIp(ip: String) {
         client?.stop()
-        exec.execute {
-            val c = client ?: return@execute
-            c.startHost(ip.trim())
-        }
-        // recreate
-        client?.stop()
-        val c = Gt7UdpClient(
-            onPacket = { p ->
-                val s = tracker.onPacket(p)
-                _ui.value = _ui.value.copy(
-                    live = s.live, packet = s.packet, fuelPct = s.fuelPct, fuelPerLap = s.fuelPerLap,
-                    lapsRemaining = s.lapsRemaining, stops = s.stops, lastMs = s.lastMs, bestMs = s.bestMs,
-                    liveDelta = s.liveDelta, deltaTrace = s.deltaTrace, laps = s.laps, lapsInMemory = s.lapsInMemory,
-                    dec = _ui.value.dec + 1, quality = 0.86f, peer = ip.trim(),
-                )
-            },
-            onRaw = { _ui.value = _ui.value.copy(rx = _ui.value.rx + 1) },
-            onDecodeFail = { _ui.value = _ui.value.copy(err = _ui.value.err + 1) },
-            onPeer = { x -> _ui.value = _ui.value.copy(peer = x) },
-            onStatus = { st -> _ui.value = _ui.value.copy(status = st) },
-        )
+        val c = bindClient(peerOverride = ip.trim())
         client = c
         exec.execute { c.startHost(ip.trim()) }
     }
@@ -197,8 +246,8 @@ fun Header(live: Boolean, mode: Mode, onMode: (Mode) -> Unit, onCog: () -> Unit)
         Lbl("Fuel — this session")
         Text("%.0f%%".format(s.fuelPct), color = Text, fontSize = if (big) 42.sp else 22.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(8.dp)); Bar((s.fuelPct / 100.0).toFloat(), Amber)
-        Text("%s%%/lap".format(s.fuelPerLap?.let { "%.1f".format(it) } ?: "—"), color = Text, fontSize = 13.sp)
-        Text("%s laps remaining".format(s.lapsRemaining?.let { "%.1f".format(it) } ?: "—"), color = Text, fontSize = 13.sp)
+        Text(s.fuelPerLap?.let { "%.1f%%/lap".format(it) } ?: "—%/lap", color = Text, fontSize = 13.sp)
+        Text(s.lapsRemaining?.let { "%.1f laps remaining".format(it) } ?: "— laps remaining", color = Text, fontSize = 13.sp)
         Text(if (s.stops == 1) "1 stop" else "${s.stops} stops", color = Muted, fontSize = 12.sp)
     }
 }
@@ -259,16 +308,19 @@ fun Header(live: Boolean, mode: Mode, onMode: (Mode) -> Unit, onCog: () -> Unit)
     }
 }
 
-@Composable fun ThrottleBrakeCard(p: TelemetryPacket?, modifier: Modifier = Modifier) {
+@Composable fun ThrottleBrakeCard(s: DashState, modifier: Modifier = Modifier) {
+    val p = s.packet
     CardBox(modifier) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Lbl("Throttle"); Text("${p?.throttlePct ?: 0}%", color = Green, fontSize = 13.sp)
         }
         Bar((p?.throttlePct ?: 0) / 100f, Color(0xFF166534))
+        InputTrace(s.throttleTrace, Green, Modifier.fillMaxWidth().height(28.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Lbl("Brake"); Text("${p?.brakePct ?: 0}%", color = Muted, fontSize = 13.sp)
         }
         Bar((p?.brakePct ?: 0) / 100f, Red)
+        InputTrace(s.brakeTrace, Red, Modifier.fillMaxWidth().height(28.dp))
     }
 }
 
@@ -297,8 +349,15 @@ fun Header(live: Boolean, mode: Mode, onMode: (Mode) -> Unit, onCog: () -> Unit)
         Lbl("Fuel — this session")
         Text("%.0f%%".format(s.fuelPct), color = Text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
         Bar((s.fuelPct / 100.0).toFloat(), Amber)
-        Text("%s%%/lap".format(s.fuelPerLap?.let { "%.1f".format(it) } ?: "—"), color = Text, fontSize = 13.sp)
-        Text("%s laps · %d stop".format(s.lapsRemaining?.let { "%.1f".format(it) } ?: "—", s.stops), color = Muted, fontSize = 12.sp)
+        Text(s.fuelPerLap?.let { "%.1f%%/lap".format(it) } ?: "—%/lap", color = Text, fontSize = 13.sp)
+        Text(
+            "%s laps · %s".format(
+                s.lapsRemaining?.let { "%.1f".format(it) } ?: "—",
+                if (s.stops == 1) "1 stop" else "${s.stops} stops",
+            ),
+            color = Muted,
+            fontSize = 12.sp,
+        )
     }
 }
 
@@ -310,7 +369,7 @@ fun Header(live: Boolean, mode: Mode, onMode: (Mode) -> Unit, onCog: () -> Unit)
         Row(Modifier.fillMaxSize().padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 GearSpeedCard(p, Modifier.fillMaxWidth())
-                ThrottleBrakeCard(p, Modifier.fillMaxWidth())
+                ThrottleBrakeCard(s, Modifier.fillMaxWidth())
             }
             Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 DeltaCard(s, Modifier.fillMaxWidth())
@@ -328,7 +387,7 @@ fun Header(live: Boolean, mode: Mode, onMode: (Mode) -> Unit, onCog: () -> Unit)
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             GearSpeedCard(p, Modifier.fillMaxWidth())
-            ThrottleBrakeCard(p, Modifier.fillMaxWidth())
+            ThrottleBrakeCard(s, Modifier.fillMaxWidth())
             DeltaCard(s, Modifier.fillMaxWidth())
             DrivingFuelCard(s, Modifier.fillMaxWidth())
             CardBox(Modifier.fillMaxWidth().height(240.dp)) {
@@ -359,8 +418,16 @@ fun Header(live: Boolean, mode: Mode, onMode: (Mode) -> Unit, onCog: () -> Unit)
 @Composable fun PitWallView(s: DashState) {
     val p = s.packet
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        CardBox(Modifier.fillMaxWidth().height(110.dp)) {
+        CardBox(Modifier.fillMaxWidth()) {
             Lbl("Delta vs session best")
+            val d = s.liveDelta
+            Text(
+                formatDelta(d),
+                color = if (d != null && d < 0) Green else if (d != null) Red else Text,
+                fontSize = 36.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(6.dp))
             DeltaTrace(s.deltaTrace, Modifier.fillMaxWidth().height(80.dp))
         }
         CardBox(Modifier.fillMaxWidth()) {
@@ -373,11 +440,6 @@ fun Header(live: Boolean, mode: Mode, onMode: (Mode) -> Unit, onCog: () -> Unit)
                 Spacer(Modifier.weight(1f))
             }
             RpmBar(p?.rpmFrac ?: 0f)
-        }
-        CardBox(Modifier.fillMaxWidth()) {
-            Lbl("Delta vs session best")
-            val d = s.liveDelta
-            Text(formatDelta(d), color = if (d != null && d < 0) Green else if (d != null) Red else Text, fontSize = 36.sp, fontWeight = FontWeight.SemiBold)
         }
         CardBox(Modifier.fillMaxWidth()) {
             Lbl("This session")
@@ -395,9 +457,15 @@ fun Header(live: Boolean, mode: Mode, onMode: (Mode) -> Unit, onCog: () -> Unit)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Bar((s.fuelPct / 100.0).toFloat(), Amber)
-                    Text("%s%%/lap · %s laps · %d stop".format(
-                        s.fuelPerLap?.let { "%.1f".format(it) } ?: "—",
-                        s.lapsRemaining?.let { "%.1f".format(it) } ?: "—", s.stops), color = Muted, fontSize = 12.sp)
+                    Text(
+                        "%s%%/lap · %s laps · %s".format(
+                            s.fuelPerLap?.let { "%.1f".format(it) } ?: "—",
+                            s.lapsRemaining?.let { "%.1f".format(it) } ?: "—",
+                            if (s.stops == 1) "1 stop" else "${s.stops} stops",
+                        ),
+                        color = Muted,
+                        fontSize = 12.sp,
+                    )
                 }
             }
         }
@@ -444,6 +512,19 @@ fun Header(live: Boolean, mode: Mode, onMode: (Mode) -> Unit, onCog: () -> Unit)
     }
 }
 
+@Composable fun InputTrace(samples: List<Float>, color: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier.clip(RoundedCornerShape(4.dp)).background(TireBg, RoundedCornerShape(4.dp))) {
+        if (samples.size < 2) return@Canvas
+        val path = Path()
+        samples.forEachIndexed { i, v ->
+            val x = size.width * i / (samples.size - 1).coerceAtLeast(1)
+            val y = size.height * (1f - v.coerceIn(0f, 1f))
+            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
+        drawPath(path, color, style = Stroke(width = 1.5f, cap = StrokeCap.Round))
+    }
+}
+
 @Composable fun SettingsSheet(s: DashState, vm: DashViewModel) {
     Box(Modifier.fillMaxSize().background(Color(0xB80B1220))) {
         Column(
@@ -471,8 +552,8 @@ fun Header(live: Boolean, mode: Mode, onMode: (Mode) -> Unit, onCog: () -> Unit)
                     }
                 }
                 Spacer(Modifier.height(8.dp))
-                Bar(if (s.peer != null) s.quality else 0f, Cyan)
-                Text("rx ${s.rx}   dec ${s.dec}   err ${s.err}", color = Muted, fontSize = 12.sp)
+                Bar(if (s.peer != null) qualityFrac(s.quality) else 0f, Cyan)
+                Text("${s.quality.name} · rx ${s.rx}   dec ${s.dec}   err ${s.err}", color = Muted, fontSize = 12.sp)
             }
             Box(
                 Modifier.fillMaxWidth().border(1.dp, Cyan, RoundedCornerShape(8.dp)).clickable { vm.showIp = true }
