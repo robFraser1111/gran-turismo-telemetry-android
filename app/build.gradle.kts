@@ -31,11 +31,11 @@ val hasReleaseSigning =
 
 android {
     namespace = "com.robfraser.slickdash"
-    compileSdk = 35
+    compileSdk = 36
     defaultConfig {
         applicationId = "com.robfraser.slickdash"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 1
         versionName = "1.0.0"
     }
